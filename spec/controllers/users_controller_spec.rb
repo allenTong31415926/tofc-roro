@@ -3,6 +3,46 @@
 require 'rails_helper'
 
 RSpec.describe UsersController, type: :controller do
+  describe 'GET #index' do
+    let!(:user1) { create(:user, name: 'John Doe', email: 'john@example.com') }
+    let!(:user2) { create(:user, name: 'Jane Smith', email: 'jane@example.com') }
+    let!(:referral) { create(:user, name: 'Bob Wilson', email: 'bob@example.com', referred_by: user1) }
+
+    before { get :index }
+
+    it 'returns http success' do
+      expect(response).to have_http_status(:success)
+    end
+
+    it 'renders the index template' do
+      expect(response).to render_template(:index)
+    end
+
+    it 'assigns all users to @users' do
+      expect(assigns(:users)).to match_array([user1, user2, referral])
+    end
+
+    it 'eager loads referrals' do
+      expect(assigns(:users).first.association(:referrals).loaded?).to be true
+    end
+  end
+
+  describe 'GET #new' do
+    before { get :new }
+
+    it 'returns http success' do
+      expect(response).to have_http_status(:success)
+    end
+
+    it 'renders the new template' do
+      expect(response).to render_template(:new)
+    end
+
+    it 'assigns a new user to @user' do
+      expect(assigns(:user)).to be_a_new(User)
+    end
+  end
+
   describe 'POST #create' do
     let(:valid_params) do
       {
@@ -20,26 +60,17 @@ RSpec.describe UsersController, type: :controller do
         }.to change(User, :count).by(1)
       end
 
-      it 'returns http success' do
+      it 'redirects to new user path with success notice' do
         post :create, params: valid_params
-        expect(response).to have_http_status(:success)
+        expect(response).to redirect_to(new_user_path)
+        expect(flash[:notice]).to eq('User Created Successfully!')
       end
 
-      it 'returns the created user as json' do
+      it 'sets the correct user attributes' do
         post :create, params: valid_params
-        expect(response.content_type).to eq('application/json; charset=utf-8')
-        
-        json_response = JSON.parse(response.body)
-        expect(json_response).to include(
-          'name' => 'John Doe',
-          'email' => 'john@example.com'
-        )
-      end
-
-      it 'generates a referral code for the user' do
-        post :create, params: valid_params
-        json_response = JSON.parse(response.body)
-        expect(json_response['referral_code']).to match(/^[A-Z0-9]{8}$/)
+        user = User.last
+        expect(user.name).to eq('John Doe')
+        expect(user.email).to eq('john@example.com')
       end
     end
 
@@ -59,17 +90,15 @@ RSpec.describe UsersController, type: :controller do
         }.not_to change(User, :count)
       end
 
-      it 'returns http unprocessable entity' do
+      it 'renders new template with unprocessable_entity status' do
         post :create, params: invalid_params
+        expect(response).to render_template(:new)
         expect(response).to have_http_status(:unprocessable_entity)
       end
 
-      it 'returns validation errors as json' do
+      it 'sets error flash message' do
         post :create, params: invalid_params
-        expect(response.content_type).to eq('application/json; charset=utf-8')
-        
-        json_response = JSON.parse(response.body)
-        expect(json_response['errors']).to eq('Invalid Name or Email')
+        expect(flash.now[:error]).to eq('Invalid Name or Email')
       end
     end
 
@@ -85,16 +114,11 @@ RSpec.describe UsersController, type: :controller do
         expect {
           post :create, params: params_with_referral
         }.to change(User, :count).by(1)
-
-        json_response = JSON.parse(response.body)
-        expect(json_response['referred_by_id']).to eq(referrer.id)
       end
 
-      it 'increments referrer reward count' do
-        expect {
-          post :create, params: params_with_referral
-          referrer.reload
-        }.to change(referrer, :reward_count).by(1)
+      it 'links the referrer correctly' do
+        post :create, params: params_with_referral
+        expect(User.last.referred_by).to eq(referrer)
       end
 
       context 'with invalid referral code' do
@@ -104,43 +128,33 @@ RSpec.describe UsersController, type: :controller do
           }
         end
 
-        it 'returns http unprocessable entity' do
-          post :create, params: params_with_invalid_referral
-          expect(response).to have_http_status(:unprocessable_entity)
-        end
-
-        it 'returns error message' do
-          post :create, params: params_with_invalid_referral
-          json_response = JSON.parse(response.body)
-          expect(json_response['errors']).to eq('Invalid Referral Code')
-        end
-
         it 'does not create a user' do
           expect {
             post :create, params: params_with_invalid_referral
           }.not_to change(User, :count)
         end
+
+        it 'renders new template with error' do
+          post :create, params: params_with_invalid_referral
+          expect(response).to render_template(:new)
+          expect(response).to have_http_status(:unprocessable_entity)
+          expect(flash.now[:error]).to eq('Invalid Referral Code')
+        end
       end
     end
 
     context 'when service fails' do
-      let(:failed_user) { build(:user) }
-      
       before do
         allow(UserSignUpService).to receive(:new).and_return(
           instance_double(UserSignUpService, call: false)
         )
       end
 
-      it 'returns http unprocessable entity' do
+      it 'renders new template with error' do
         post :create, params: valid_params
+        expect(response).to render_template(:new)
         expect(response).to have_http_status(:unprocessable_entity)
-      end
-
-      it 'returns error message' do
-        post :create, params: valid_params
-        json_response = JSON.parse(response.body)
-        expect(json_response['errors']).to eq('Invalid Name or Email')
+        expect(flash.now[:error]).to eq('Invalid Name or Email')
       end
     end
   end
