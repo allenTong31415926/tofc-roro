@@ -13,7 +13,7 @@ class UsersController < ApplicationController
       return
     end
 
-    if user = UserSignUpService.new(user_params).call
+    if UserSignUpService.new(user_params).call
       flash[:notice] = 'User Created Successfully!'
       redirect_to new_user_path
     else
